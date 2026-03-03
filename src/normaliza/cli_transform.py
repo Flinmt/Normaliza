@@ -5,11 +5,16 @@ import json
 from datetime import datetime
 
 from normaliza.config import load_db_config
-from normaliza.db import load_atr_lookup, load_psv_professional_lookup
+from normaliza.db import (
+    load_atr_lookup,
+    load_client_id_lookup,
+    load_psv_professional_lookup,
+)
 from normaliza.transform import transform_csv
 
 
 DEFAULT_DATABASE = "BIODATA_HVISAO"
+DEFAULT_CLIENT_MAP_DATABASE = "REPOSITORIO_HVISAO"
 
 
 def main() -> None:
@@ -17,6 +22,11 @@ def main() -> None:
     parser.add_argument("--csv", default="rcl.csv", help="Caminho do CSV de origem")
     parser.add_argument("--env", default=".env", help="Caminho do arquivo .env")
     parser.add_argument("--database", default=DEFAULT_DATABASE, help="Banco SQL Server")
+    parser.add_argument(
+        "--client-map-database",
+        default=DEFAULT_CLIENT_MAP_DATABASE,
+        help="Banco onde está tblMap_PACReg_ClienteId",
+    )
     parser.add_argument("--out", default="output/rcl_transformado.csv", help="CSV de saída")
     parser.add_argument(
         "--summary",
@@ -26,21 +36,24 @@ def main() -> None:
     args = parser.parse_args()
 
     started = datetime.now()
-    print("[1/3] Carregando configuração, ATR e PSV...")
+    print("[1/3] Carregando configuração, ATR, PSV e mapa de cliente...")
     db_config = load_db_config(args.env)
     atr_lookup = load_atr_lookup(db_config, args.database)
     psv_lookup = load_psv_professional_lookup(db_config, args.database)
+    client_lookup = load_client_id_lookup(db_config, args.database, args.client_map_database)
 
     print("[2/3] Transformando CSV em streaming...")
-    stats = transform_csv(args.csv, args.out, atr_lookup, psv_lookup)
+    stats = transform_csv(args.csv, args.out, atr_lookup, psv_lookup, client_lookup)
 
     summary = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "database": args.database,
+        "client_map_database": args.client_map_database,
         "csv": args.csv,
         "output": args.out,
         "atr_pairs_loaded": len(atr_lookup),
         "psv_professional_keys_loaded": len(psv_lookup),
+        "client_id_map_keys_loaded": len(client_lookup),
         "stats": stats,
         "elapsed_seconds": (datetime.now() - started).total_seconds(),
     }

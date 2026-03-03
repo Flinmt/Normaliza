@@ -25,6 +25,7 @@ def transform_csv(
     output_path: str,
     atr_lookup,
     psv_lookup,
+    client_lookup,
 ) -> dict[str, int]:
     set_max_csv_field_size()
 
@@ -38,6 +39,8 @@ def transform_csv(
         "rows_plain": 0,
         "rows_med_mapped": 0,
         "rows_med_unmapped": 0,
+        "rows_client_mapped": 0,
+        "rows_client_unmapped": 0,
     }
 
     with source.open("r", encoding="utf-8", errors="replace", newline="") as rf, target.open(
@@ -52,6 +55,7 @@ def transform_csv(
                 raise RuntimeError(f"CSV sem coluna obrigatória: {required}")
 
         output_fields = list(reader.fieldnames) + [
+            "rcl_pac_original",
             "rcl_med_original",
             "rcl_txt_html",
             "rcl_txt_original",
@@ -65,6 +69,7 @@ def transform_csv(
             rcl_cod = (row.get("rcl_cod") or "").strip()
             original = row.get("rcl_txt") or ""
             original_med = (row.get("rcl_med") or "").strip()
+            original_pac = (row.get("rcl_pac") or "").strip()
 
             html_render = decode_structured_text(original, rcl_cod, atr_lookup)
             rendered = html_render if html_render else original
@@ -75,6 +80,13 @@ def transform_csv(
                 stats["rows_plain"] += 1
 
             out_row = dict(row)
+            out_row["rcl_pac_original"] = original_pac
+            if original_pac and original_pac in client_lookup:
+                out_row["rcl_pac"] = client_lookup[original_pac]
+                stats["rows_client_mapped"] += 1
+            else:
+                stats["rows_client_unmapped"] += 1
+
             out_row["rcl_med_original"] = original_med
             if original_med and original_med in psv_lookup:
                 out_row["rcl_med"] = psv_lookup[original_med]

@@ -1,0 +1,12 @@
+services:
+  normaliza:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: normaliza:latest
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/app
+    command: ["python", "scripts/menu.py"]

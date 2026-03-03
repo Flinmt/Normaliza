@@ -102,3 +102,35 @@ def load_psv_professional_lookup(config: DbConfig, database: str) -> dict[str, s
         return lookup
     finally:
         conn.close()
+
+
+def load_client_id_lookup(
+    config: DbConfig, database: str, map_database: str = "REPOSITORIO_HVISAO"
+) -> dict[str, str]:
+    conn = _connect(config, map_database)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT [PAC_REG_OLD], [ClienteId_New]
+            FROM tblMap_PACReg_ClienteId
+            WHERE [PAC_REG_OLD] IS NOT NULL
+              AND [ClienteId_New] IS NOT NULL
+            """
+        )
+
+        lookup: dict[str, str] = {}
+        for pac_old, client_new in cur.fetchall():
+            old_key = str(pac_old).strip()
+            if not old_key:
+                continue
+            lookup[old_key] = str(client_new).strip()
+        return lookup
+    except Exception as exc:
+        raise RuntimeError(
+            "Falha ao carregar mapeamento de cliente em "
+            f"{map_database}.dbo.tblMap_PACReg_ClienteId "
+            "(PAC_REG_OLD -> ClienteId_New)."
+        ) from exc
+    finally:
+        conn.close()

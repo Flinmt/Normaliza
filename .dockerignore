@@ -1,0 +1,18 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+
+# Dados locais grandes / saídas
+rcl.csv
+output/
+reports_mapping/
+
+# Credenciais locais
+.env
