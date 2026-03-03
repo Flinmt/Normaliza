@@ -24,3 +24,8 @@ dist/
 output/
 reports_mapping/
 rcl.csv
+
+# Data lake local (datasets de carga)
+data/**/*.csv
+data/**/*.txt
+!data/**/.gitkeep

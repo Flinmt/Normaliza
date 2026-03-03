@@ -25,7 +25,7 @@ def run_cmd(args: list[str]) -> int:
 
 
 def run_transform() -> None:
-    csv_path = ask("CSV de origem", "rcl.csv")
+    csv_path = ask("CSV de origem", "data/initial/initial.csv")
     env_path = ask("Arquivo .env", ".env")
     database = ask("Banco", "BIODATA_HVISAO")
     client_map_database = ask("Banco do mapa de cliente", "REPOSITORIO_HVISAO")
@@ -165,6 +165,26 @@ def run_tbl_anamnese_delete_batches() -> None:
     print(f"Finalizado com codigo: {code}\n")
 
 
+def run_tbl_anamnese_backup() -> None:
+    env_path = ask("Arquivo .env", ".env")
+    database = ask("Banco de destino", "BIODATA_HVISAO")
+    date_token = ask("Data para sufixo ddMMyyyy (vazio=hoje)", "")
+
+    cmd = [
+        sys.executable,
+        str(SCRIPTS_DIR / "create_tbl_anamnese_backup.py"),
+        "--env",
+        env_path,
+        "--database",
+        database,
+    ]
+    if date_token:
+        cmd.extend(["--date", date_token])
+
+    code = run_cmd(cmd)
+    print(f"Finalizado com codigo: {code}\n")
+
+
 def main() -> None:
     while True:
         print("=== Normaliza | Menu ===")
@@ -175,13 +195,14 @@ def main() -> None:
         print("5) Gerar CSV para tblAnamnese")
         print("6) Importar CSV em lotes para tblAnamnese")
         print("7) Remover dados da tblAnamnese em lotes (perigoso)")
-        print("8) Sair")
-        choice = input("Escolha uma opcao (1-8): ").strip()
+        print("8) Criar backup da tblAnamnese")
+        print("9) Sair")
+        choice = input("Escolha uma opcao (1-9): ").strip()
 
         if choice == "1":
             run_transform()
         elif choice == "2":
-            run_preview("rcl.csv", "output/preview")
+            run_preview("data/initial/initial.csv", "output/preview")
         elif choice == "3":
             run_preview("output/rcl_transformado.csv", "output/preview_transformado")
         elif choice == "4":
@@ -194,6 +215,8 @@ def main() -> None:
         elif choice == "7":
             run_tbl_anamnese_delete_batches()
         elif choice == "8":
+            run_tbl_anamnese_backup()
+        elif choice == "9":
             print("Encerrado.")
             return
         else:

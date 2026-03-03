@@ -26,6 +26,8 @@ def transform_csv(
     atr_lookup,
     psv_lookup,
     client_lookup,
+    input_encoding: str = "utf-8",
+    output_encoding: str = "utf-8",
 ) -> dict[str, int]:
     set_max_csv_field_size()
 
@@ -43,8 +45,8 @@ def transform_csv(
         "rows_client_unmapped": 0,
     }
 
-    with source.open("r", encoding="utf-8", errors="replace", newline="") as rf, target.open(
-        "w", encoding="utf-8", newline=""
+    with source.open("r", encoding=input_encoding, errors="replace", newline="") as rf, target.open(
+        "w", encoding=output_encoding, newline=""
     ) as wf:
         reader = csv.DictReader(rf)
         if not reader.fieldnames:

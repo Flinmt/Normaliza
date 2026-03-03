@@ -57,6 +57,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ativa fast_executemany (mais rapido, pode usar mais memoria)",
     )
+    p.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Desativa retomada automatica por intAnamneseId ja existente",
+    )
     p.add_argument("--dry-run", action="store_true", help="Somente valida leitura sem inserir")
     return p.parse_args()
 
@@ -92,6 +97,15 @@ def insert_batch_with_fallback(cur, sql: str, batch: list[tuple], min_chunk: int
         mid = len(batch) // 2
         insert_batch_with_fallback(cur, sql, batch[:mid], min_chunk=min_chunk)
         insert_batch_with_fallback(cur, sql, batch[mid:], min_chunk=min_chunk)
+
+
+def fetch_existing_ids(cur, ids: list[int]) -> set[int]:
+    if not ids:
+        return set()
+    placeholders = ",".join("?" for _ in ids)
+    sql = f"SELECT intAnamneseId FROM dbo.tblAnamnese WHERE intAnamneseId IN ({placeholders})"
+    cur.execute(sql, ids)
+    return {int(row[0]) for row in cur.fetchall()}
 
 
 def main() -> None:
@@ -135,31 +149,69 @@ def main() -> None:
     """
 
     inserted = 0
+    skipped_resume = 0
+    skipped_db_duplicate = 0
+    skipped_csv_duplicate = 0
     batch: list[tuple] = []
+    seen_in_csv: set[int] = set()
 
     try:
         cur = conn.cursor()
         cur.fast_executemany = bool(args.fast_executemany)
+        cur.execute("SELECT ISNULL(MAX(intAnamneseId), 0) FROM dbo.tblAnamnese")
+        max_existing_id = int(cur.fetchone()[0] or 0)
+        resume_enabled = not args.no_resume
+        if resume_enabled:
+            print(f"Resume ativo. Maior intAnamneseId atual na tabela: {max_existing_id}")
 
         with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                batch.append(row_to_tuple(row))
+                item = row_to_tuple(row)
+                row_id = item[0]
+                if row_id is None:
+                    continue
+
+                if resume_enabled and row_id <= max_existing_id:
+                    skipped_resume += 1
+                    continue
+
+                if row_id in seen_in_csv:
+                    skipped_csv_duplicate += 1
+                    continue
+                seen_in_csv.add(row_id)
+                batch.append(item)
+
                 if len(batch) >= args.batch_size:
-                    insert_batch_with_fallback(cur, sql, batch)
+                    batch_ids = [x[0] for x in batch if x[0] is not None]
+                    existing_ids = fetch_existing_ids(cur, batch_ids)
+                    if existing_ids:
+                        skipped_db_duplicate += sum(1 for x in batch if x[0] in existing_ids)
+                    to_insert = [x for x in batch if x[0] not in existing_ids]
+                    if to_insert:
+                        insert_batch_with_fallback(cur, sql, to_insert)
                     conn.commit()
-                    inserted += len(batch)
+                    inserted += len(to_insert)
                     print(f"Lote inserido. Total acumulado: {inserted}")
                     batch.clear()
 
             if batch:
-                insert_batch_with_fallback(cur, sql, batch)
+                batch_ids = [x[0] for x in batch if x[0] is not None]
+                existing_ids = fetch_existing_ids(cur, batch_ids)
+                if existing_ids:
+                    skipped_db_duplicate += sum(1 for x in batch if x[0] in existing_ids)
+                to_insert = [x for x in batch if x[0] not in existing_ids]
+                if to_insert:
+                    insert_batch_with_fallback(cur, sql, to_insert)
                 conn.commit()
-                inserted += len(batch)
+                inserted += len(to_insert)
                 print(f"Lote final inserido. Total acumulado: {inserted}")
 
         print("Importação concluída.")
         print(f"Total inserido: {inserted}")
+        print(f"Ignorados por resume: {skipped_resume}")
+        print(f"Ignorados por duplicidade no banco: {skipped_db_duplicate}")
+        print(f"Ignorados por duplicidade no CSV: {skipped_csv_duplicate}")
     except Exception:
         conn.rollback()
         raise

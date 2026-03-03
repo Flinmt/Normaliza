@@ -10,6 +10,11 @@ Pipeline de normalização/migração do histórico clínico (`rcl.csv`) do sist
 
 ## Estrutura
 
+- `data/raw/`: extrações brutas do banco (base para montar a carga inicial).
+- `data/initial/`: carga inicial histórica (snapshot completo).
+- `data/incremental/`: cargas posteriores (arquivos menores).
+- `data/current/`: dataset ativo opcional para rodadas incrementais.
+- `data/archive/`: arquivos já processados.
 - `src/normaliza/config.py`: leitura de configuração (`.env`).
 - `src/normaliza/db.py`: conexão SQL Server e carga de dicionário ATR.
 - `src/normaliza/decoder.py`: parser e renderização HTML.
@@ -18,6 +23,7 @@ Pipeline de normalização/migração do histórico clínico (`rcl.csv`) do sist
 - `scripts/build_tbl_anamnese_csv.py`: exporta CSV final no layout de `tblAnamnese`.
 - `scripts/import_tbl_anamnese_batches.py`: importa o CSV final na `tblAnamnese` em lotes.
 - `scripts/delete_tbl_anamnese_batches.py`: remove dados da `tblAnamnese` em lotes.
+- `scripts/create_tbl_anamnese_backup.py`: cria tabela de backup da `tblAnamnese`.
 
 ## Requisitos
 
@@ -57,7 +63,7 @@ docker compose up --build
 ```
 
 Observações:
-- `rcl.csv` e `.env` devem existir no diretório do projeto host para serem usados no container.
+- `data/initial/initial.csv` e `.env` devem existir no diretório do projeto host para serem usados no container.
 - o volume `./:/app` permite ler e gerar arquivos localmente em `output/`.
 
 ## Configuração (`.env`)
@@ -74,8 +80,22 @@ DB_PASS=...
 ## Execução
 
 ```bash
-python scripts/transform_rcl.py --csv rcl.csv --env .env --database BIODATA_HVISAO --client-map-database REPOSITORIO_HVISAO --out output/rcl_transformado.csv
+python scripts/transform_rcl.py --csv data/initial/initial.csv --env .env --database BIODATA_HVISAO --client-map-database REPOSITORIO_HVISAO --out output/rcl_transformado.csv
 ```
+
+## Fluxo de cargas
+
+1. Carga inicial:
+- extrair arquivos brutos para `data/raw/`
+- concatenar/tratar os brutos e gerar `data/initial/initial.csv`
+- salvar snapshot completo como `data/initial/initial.csv`
+- executar transformação e importação
+
+2. Cargas incrementais:
+- salvar novos arquivos em `data/incremental/` (ex.: `data/incremental/rcl_202603.csv`)
+- executar com `--csv data/incremental/<arquivo_da_rodada>.csv`
+- executar apenas o pipeline normal (sem precisar limpar `tblAnamnese`)
+- mover o arquivo já processado para `data/archive/`
 
 ## Menu Interativo (Terminal)
 
@@ -93,6 +113,7 @@ Opções disponíveis no menu:
 - Gerar CSV para `tblAnamnese` com `intAnamneseId` manual.
 - Importar CSV para `tblAnamnese` em lotes.
 - Remover dados da `tblAnamnese` em lotes.
+- Criar backup da `tblAnamnese`.
 
 ## Saída
 
@@ -132,6 +153,15 @@ python scripts/delete_tbl_anamnese_batches.py --env .env --database BIODATA_HVIS
 Aviso:
 - comando destrutivo; use com cuidado.
 - o script pede confirmacao interativa (`SIM`) por padrao.
+
+Para criar backup da `tblAnamnese`:
+
+```bash
+python scripts/create_tbl_anamnese_backup.py --env .env --database BIODATA_HVISAO
+```
+
+Nome gerado:
+- `tblAnamnese_BKP_ddMMyyyy` (ex.: `tblAnamnese_BKP_03032026`)
 
 ## Regras implementadas
 

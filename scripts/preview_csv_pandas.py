@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Gera artefatos leves para visualizar CSV grande usando pandas em chunks."
     )
-    p.add_argument("--csv", default="rcl.csv", help="CSV de origem")
+    p.add_argument("--csv", default="data/initial/initial.csv", help="CSV de origem")
     p.add_argument("--out-dir", default="output/preview", help="Pasta de saída")
     p.add_argument("--chunksize", type=int, default=150_000, help="Linhas por chunk")
     p.add_argument("--head", type=int, default=200, help="Quantidade de linhas no head")
@@ -24,7 +24,26 @@ def build_parser() -> argparse.ArgumentParser:
         default="rcl_pac,rcl_cod,rcl_dthr,rcl_med,rcl_txt",
         help="Colunas para a amostra (separadas por vírgula)",
     )
+    p.add_argument(
+        "--encoding",
+        default="auto",
+        help="Encoding do CSV (ex.: auto, utf-8, cp1252, latin-1)",
+    )
     return p
+
+
+def resolve_input_encoding(csv_path: Path, requested: str) -> str:
+    if requested.lower() != "auto":
+        return requested
+
+    sample = csv_path.read_bytes()[:512_000]
+    for enc in ("utf-8", "cp1252", "latin-1"):
+        try:
+            sample.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+    return "latin-1"
 
 
 def _safe_value_counts(series: pd.Series, topn: int = 20) -> dict[str, int]:
@@ -39,6 +58,7 @@ def main() -> None:
     csv_path = Path(args.csv)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    source_encoding = resolve_input_encoding(csv_path, args.encoding)
 
     selected_columns = [c.strip() for c in args.columns.split(",") if c.strip()]
 
@@ -59,7 +79,7 @@ def main() -> None:
         keep_default_na=False,
         chunksize=args.chunksize,
         low_memory=True,
-        encoding="utf-8",
+        encoding=source_encoding,
         on_bad_lines="skip",
     )
 
@@ -113,6 +133,7 @@ def main() -> None:
 
     summary = {
         "csv": str(csv_path.resolve()),
+        "input_encoding": source_encoding,
         "total_rows": int(total_rows),
         "columns": list(head_df.columns) if head_df is not None else [],
         "rows_with_structured_pattern": int(rows_with_structured),
