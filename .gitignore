@@ -28,4 +28,6 @@ rcl.csv
 # Data lake local (datasets de carga)
 data/**/*.csv
 data/**/*.txt
+data/**/*.sql
+data/**/*.SQL
 !data/**/.gitkeep

@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -85,6 +87,91 @@ def row_to_tuple(row: dict[str, str]):
     )
 
 
+def sortable_datetime_desc(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return "0000-00-00 00:00:00.000000"
+    if "." in raw:
+        base, frac = raw.split(".", 1)
+    else:
+        base, frac = raw, ""
+    frac = (frac + "000000")[:6]
+    return f"{base}.{frac}"
+
+
+def iter_rows_sorted_recent_first(csv_path: Path):
+    fd, sqlite_path = tempfile.mkstemp(prefix="normaliza_import_", suffix=".sqlite3")
+    os.close(fd)
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE staging (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                sort_key TEXT NOT NULL,
+                intAnamneseId TEXT,
+                strAnamnese TEXT,
+                intClienteId TEXT,
+                intAtendimentoId TEXT,
+                intProfissionalId TEXT,
+                intUsuarioId TEXT,
+                intEmpresaId TEXT,
+                datAnamnese TEXT,
+                strAnamneseMobile TEXT,
+                intEspecialidadeMedicaId TEXT,
+                bolNaoCompartilhar TEXT,
+                bolJson TEXT,
+                strJson TEXT,
+                bolTriagem TEXT
+            )
+            """
+        )
+
+        insert_sql = """
+            INSERT INTO staging (
+                sort_key, intAnamneseId, strAnamnese, intClienteId, intAtendimentoId,
+                intProfissionalId, intUsuarioId, intEmpresaId, datAnamnese, strAnamneseMobile,
+                intEspecialidadeMedicaId, bolNaoCompartilhar, bolJson, strJson, bolTriagem
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        batch: list[tuple[str, ...]] = []
+        with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                batch.append(
+                    (
+                        sortable_datetime_desc(row.get("datAnamnese") or ""),
+                        *(row.get(col) or "" for col in COLS),
+                    )
+                )
+                if len(batch) >= 1000:
+                    cur.executemany(insert_sql, batch)
+                    conn.commit()
+                    batch.clear()
+            if batch:
+                cur.executemany(insert_sql, batch)
+                conn.commit()
+
+        select_sql = """
+            SELECT
+                intAnamneseId, strAnamnese, intClienteId, intAtendimentoId, intProfissionalId,
+                intUsuarioId, intEmpresaId, datAnamnese, strAnamneseMobile,
+                intEspecialidadeMedicaId, bolNaoCompartilhar, bolJson, strJson, bolTriagem
+            FROM staging
+            ORDER BY sort_key DESC, seq DESC
+        """
+        for row in cur.execute(select_sql):
+            yield {COLS[idx]: row[idx] or "" for idx in range(len(COLS))}
+    finally:
+        conn.close()
+        try:
+            os.remove(sqlite_path)
+        except OSError:
+            pass
+
+
 def insert_batch_with_fallback(cur, sql: str, batch: list[tuple], min_chunk: int = 10) -> None:
     if not batch:
         return
@@ -158,54 +245,52 @@ def main() -> None:
     try:
         cur = conn.cursor()
         cur.fast_executemany = bool(args.fast_executemany)
-        cur.execute("SELECT ISNULL(MAX(intAnamneseId), 0) FROM dbo.tblAnamnese")
-        max_existing_id = int(cur.fetchone()[0] or 0)
         resume_enabled = not args.no_resume
         if resume_enabled:
-            print(f"Resume ativo. Maior intAnamneseId atual na tabela: {max_existing_id}")
+            print("Resume ativo. Registros ja existentes no banco serao ignorados por intAnamneseId.")
 
-        with csv_path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                item = row_to_tuple(row)
-                row_id = item[0]
-                if row_id is None:
-                    continue
+        for row in iter_rows_sorted_recent_first(csv_path):
+            item = row_to_tuple(row)
+            row_id = item[0]
+            if row_id is None:
+                continue
 
-                if resume_enabled and row_id <= max_existing_id:
-                    skipped_resume += 1
-                    continue
+            if row_id in seen_in_csv:
+                skipped_csv_duplicate += 1
+                continue
+            seen_in_csv.add(row_id)
+            batch.append(item)
 
-                if row_id in seen_in_csv:
-                    skipped_csv_duplicate += 1
-                    continue
-                seen_in_csv.add(row_id)
-                batch.append(item)
-
-                if len(batch) >= args.batch_size:
-                    batch_ids = [x[0] for x in batch if x[0] is not None]
-                    existing_ids = fetch_existing_ids(cur, batch_ids)
-                    if existing_ids:
-                        skipped_db_duplicate += sum(1 for x in batch if x[0] in existing_ids)
-                    to_insert = [x for x in batch if x[0] not in existing_ids]
-                    if to_insert:
-                        insert_batch_with_fallback(cur, sql, to_insert)
-                    conn.commit()
-                    inserted += len(to_insert)
-                    print(f"Lote inserido. Total acumulado: {inserted}")
-                    batch.clear()
-
-            if batch:
+            if len(batch) >= args.batch_size:
                 batch_ids = [x[0] for x in batch if x[0] is not None]
                 existing_ids = fetch_existing_ids(cur, batch_ids)
                 if existing_ids:
-                    skipped_db_duplicate += sum(1 for x in batch if x[0] in existing_ids)
+                    if resume_enabled:
+                        skipped_resume += sum(1 for x in batch if x[0] in existing_ids)
+                    else:
+                        skipped_db_duplicate += sum(1 for x in batch if x[0] in existing_ids)
                 to_insert = [x for x in batch if x[0] not in existing_ids]
                 if to_insert:
                     insert_batch_with_fallback(cur, sql, to_insert)
                 conn.commit()
                 inserted += len(to_insert)
-                print(f"Lote final inserido. Total acumulado: {inserted}")
+                print(f"Lote inserido. Total acumulado: {inserted}")
+                batch.clear()
+
+        if batch:
+            batch_ids = [x[0] for x in batch if x[0] is not None]
+            existing_ids = fetch_existing_ids(cur, batch_ids)
+            if existing_ids:
+                if resume_enabled:
+                    skipped_resume += sum(1 for x in batch if x[0] in existing_ids)
+                else:
+                    skipped_db_duplicate += sum(1 for x in batch if x[0] in existing_ids)
+            to_insert = [x for x in batch if x[0] not in existing_ids]
+            if to_insert:
+                insert_batch_with_fallback(cur, sql, to_insert)
+            conn.commit()
+            inserted += len(to_insert)
+            print(f"Lote final inserido. Total acumulado: {inserted}")
 
         print("Importação concluída.")
         print(f"Total inserido: {inserted}")

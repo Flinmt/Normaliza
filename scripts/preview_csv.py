@@ -29,6 +29,22 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Encoding do CSV (ex.: auto, utf-8, cp1252, latin-1)",
     )
+    p.add_argument(
+        "--ensure-anamnese-mix",
+        action="store_true",
+        help="Garante exemplos de anamnese estruturada (<ul><li>) e texto plano no sample.",
+    )
+    p.add_argument(
+        "--mix-per-type",
+        type=int,
+        default=10,
+        help="Quantidade minima por tipo (estruturada/plana) quando --ensure-anamnese-mix estiver ativo.",
+    )
+    p.add_argument(
+        "--anamnese-column",
+        default="strAnamnese",
+        help="Coluna para detectar anamnese estruturada/plana.",
+    )
     return p
 
 
@@ -36,7 +52,8 @@ def resolve_input_encoding(csv_path: Path, requested: str) -> str:
     if requested.lower() != "auto":
         return requested
 
-    sample = csv_path.read_bytes()[:512_000]
+    with csv_path.open("rb") as rf:
+        sample = rf.read(512_000)
     for enc in ("utf-8", "cp1252", "latin-1"):
         try:
             sample.decode(enc)
@@ -71,6 +88,8 @@ def main() -> None:
     # Amostragem incremental por chunk
     sampled_parts: list[pd.DataFrame] = []
     head_df: pd.DataFrame | None = None
+    structured_examples: list[pd.DataFrame] = []
+    plain_examples: list[pd.DataFrame] = []
 
     # Lê tudo como string para evitar inferência custosa e inconsistências
     reader = pd.read_csv(
@@ -105,6 +124,23 @@ def main() -> None:
             part = chunk.sample(frac=frac, random_state=args.seed)
             sampled_parts.append(part)
 
+        if args.ensure_anamnese_mix and args.anamnese_column in chunk.columns:
+            col = chunk[args.anamnese_column].fillna("").astype(str)
+            structured_mask = col.str.contains("<ul>", regex=False) & col.str.contains("<li>", regex=False)
+            plain_mask = ~structured_mask
+
+            need_structured = max(args.mix_per_type - sum(len(x) for x in structured_examples), 0)
+            if need_structured > 0:
+                pick = chunk.loc[structured_mask].head(need_structured)
+                if not pick.empty:
+                    structured_examples.append(pick)
+
+            need_plain = max(args.mix_per_type - sum(len(x) for x in plain_examples), 0)
+            if need_plain > 0:
+                pick = chunk.loc[plain_mask].head(need_plain)
+                if not pick.empty:
+                    plain_examples.append(pick)
+
     if total_rows == 0:
         raise RuntimeError("CSV vazio ou inválido.")
 
@@ -115,6 +151,15 @@ def main() -> None:
             sampled_df = sampled_df.sample(n=args.sample, random_state=args.seed)
     else:
         sampled_df = pd.DataFrame()
+
+    if args.ensure_anamnese_mix:
+        extras: list[pd.DataFrame] = []
+        if structured_examples:
+            extras.append(pd.concat(structured_examples, ignore_index=True))
+        if plain_examples:
+            extras.append(pd.concat(plain_examples, ignore_index=True))
+        if extras:
+            sampled_df = pd.concat([sampled_df] + extras, ignore_index=True).drop_duplicates()
 
     # Reduz para colunas desejadas, se existirem
     existing_cols = [c for c in selected_columns if c in sampled_df.columns]

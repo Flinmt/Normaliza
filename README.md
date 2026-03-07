@@ -20,10 +20,11 @@ Pipeline de normalização/migração do histórico clínico (`rcl.csv`) do sist
 - `src/normaliza/decoder.py`: parser e renderização HTML.
 - `src/normaliza/transform.py`: processamento streaming do CSV.
 - `scripts/transform_rcl.py`: CLI principal.
-- `scripts/build_tbl_anamnese_csv.py`: exporta CSV final no layout de `tblAnamnese`.
-- `scripts/import_tbl_anamnese_batches.py`: importa o CSV final na `tblAnamnese` em lotes.
-- `scripts/delete_tbl_anamnese_batches.py`: remove dados da `tblAnamnese` em lotes.
-- `scripts/create_tbl_anamnese_backup.py`: cria tabela de backup da `tblAnamnese`.
+- `scripts/raw_sql_to_initial_csv.py`: consolida SQLs brutos em `data/initial/initial.csv`.
+- `scripts/transformed_csv_to_tbl_anamnese_csv.py`: exporta CSV final no layout de `tblAnamnese`.
+- `scripts/import_tbl_anamnese_csv_batches.py`: importa o CSV final na `tblAnamnese` em lotes.
+- `scripts/purge_tbl_anamnese_batches.py`: remove dados da `tblAnamnese` em lotes.
+- `scripts/backup_tbl_anamnese.py`: cria tabela de backup da `tblAnamnese`.
 
 ## Requisitos
 
@@ -87,7 +88,12 @@ python scripts/transform_rcl.py --csv data/initial/initial.csv --env .env --data
 
 1. Carga inicial:
 - extrair arquivos brutos para `data/raw/`
-- concatenar/tratar os brutos e gerar `data/initial/initial.csv`
+- gerar `data/initial/initial.csv` com:
+
+```bash
+python scripts/raw_sql_to_initial_csv.py --raw-dir data/raw --pattern "*.SQL" --out data/initial/initial.csv
+```
+
 - salvar snapshot completo como `data/initial/initial.csv`
 - executar transformação e importação
 
@@ -106,14 +112,9 @@ python scripts/menu.py
 ```
 
 Opções disponíveis no menu:
-- Transformar CSV legado.
-- Gerar preview do CSV original.
-- Gerar preview do CSV transformado.
-- Transformar e gerar preview em sequência.
-- Gerar CSV para `tblAnamnese` com `intAnamneseId` manual.
-- Importar CSV para `tblAnamnese` em lotes.
-- Remover dados da `tblAnamnese` em lotes.
-- Criar backup da `tblAnamnese`.
+- Carga Inicial (RAW -> CSV padronizado -> auditoria, sem importar automaticamente).
+- Carga Incremental (RAW incremental -> CSV padronizado -> auditoria, sem importar automaticamente).
+- Avançado (backup, importação inicial/incremental e remoção em lotes).
 
 ## Saída
 
@@ -132,7 +133,7 @@ O CSV de saída mantém as colunas originais e adiciona:
 Para gerar um CSV já no formato da tabela `tblAnamnese`:
 
 ```bash
-python scripts/build_tbl_anamnese_csv.py --in output/rcl_transformado.csv --out output/tblAnamnese_import.csv --start-id 400000
+python scripts/transformed_csv_to_tbl_anamnese_csv.py --in output/rcl_transformado.csv --out output/tblAnamnese_import.csv --start-id 400000
 ```
 
 Observação:
@@ -141,13 +142,13 @@ Observação:
 Para importar em lotes:
 
 ```bash
-python scripts/import_tbl_anamnese_batches.py --csv output/tblAnamnese_import.csv --env .env --database BIODATA_HVISAO --batch-size 2000
+python scripts/import_tbl_anamnese_csv_batches.py --csv output/tblAnamnese_import.csv --env .env --database BIODATA_HVISAO --batch-size 2000
 ```
 
 Para remover todos os dados de `tblAnamnese` em lotes:
 
 ```bash
-python scripts/delete_tbl_anamnese_batches.py --env .env --database BIODATA_HVISAO --batch-size 2000
+python scripts/purge_tbl_anamnese_batches.py --env .env --database BIODATA_HVISAO --batch-size 2000
 ```
 
 Aviso:
@@ -157,7 +158,7 @@ Aviso:
 Para criar backup da `tblAnamnese`:
 
 ```bash
-python scripts/create_tbl_anamnese_backup.py --env .env --database BIODATA_HVISAO
+python scripts/backup_tbl_anamnese.py --env .env --database BIODATA_HVISAO
 ```
 
 Nome gerado:
@@ -177,4 +178,7 @@ Nome gerado:
 
 - A tabela `ATR` é a fonte principal de mapeamento de legibilidade.
 - O texto livre não é reformulado para evitar perda de contexto clínico.
+
+
+
 
